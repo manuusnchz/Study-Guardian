@@ -1,272 +1,252 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import pyautogui
 import time
 import os
 import urllib.request
 import math
 
-
-def formatear_tiempo(segundos):
-    m = int(segundos // 60)
-    s = int(segundos % 60)
-    return f"{m:02d}:{s:02d}"
-
-# --- 1. DESCARGA AUTOMÁTICA DE MODELOS ---
+# --- 1. DESCARGA DE MODELOS (Cara, Manos y Objetos) ---
 def descargar_modelo(url, filename):
     if not os.path.exists(filename):
         print(f"⏳ Descargando {filename}...")
-        urllib.request.urlretrieve(url, filename)
-        print("✅ Descargado.")
+        try:
+            urllib.request.urlretrieve(url, filename)
+            print("✅ Descargado.")
+        except Exception as e:
+            print(f"❌ Error: {e}")
 
+# Modelos necesarios
 descargar_modelo("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", 'face_landmarker.task')
 descargar_modelo("https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", 'hand_landmarker.task')
-descargar_modelo("https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", 'pose_landmarker_lite.task')
+descargar_modelo("https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite", 'efficientdet.tflite')
 
-# --- 2. CONFIGURACIÓN DE LA IA ---
+# --- 2. CONFIGURACIÓN ---
 BaseOptions = mp.tasks.BaseOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 
+# Detector de Cara (Sueño)
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
 FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
 face_options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path='face_landmarker.task'),
-    running_mode=VisionRunningMode.VIDEO,
-    num_faces=1
-)
+    running_mode=VisionRunningMode.VIDEO, num_faces=1)
 
+# Detector de Manos (Agua)
 HandLandmarker = mp.tasks.vision.HandLandmarker
 HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 hand_options = HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path='hand_landmarker.task'),
+    running_mode=VisionRunningMode.VIDEO, num_hands=2)
+
+# Detector de Objetos (Móvil)
+ObjectDetector = mp.tasks.vision.ObjectDetector
+ObjectDetectorOptions = mp.tasks.vision.ObjectDetectorOptions
+obj_options = ObjectDetectorOptions(
+    base_options=BaseOptions(model_asset_path='efficientdet.tflite'),
     running_mode=VisionRunningMode.VIDEO,
-    num_hands=2
-)
+    score_threshold=0.5, # Confianza mínima del 50%
+    category_allowlist=['cell phone']) # Solo nos interesa el móvil
 
-# Configurar Detector de Pose (Cuerpo entero)
-PoseLandmarker = mp.tasks.vision.PoseLandmarker
-PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-pose_options = PoseLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path='pose_landmarker_lite.task'), # <--- AÑADE _lite
-    running_mode=VisionRunningMode.VIDEO, num_poses=1
-)
+# --- PARÁMETROS DE COMPORTAMIENTO ---
+# Sueño
+UMBRAL_OJOS_CERRADOS = 0.02 # Distancia vertical párpados (Ajustar si es necesario)
+TIEMPO_PARA_DORMIRSE = 2.0  # Segundos con ojos cerrados para pitar
 
-# --- CONFIGURACIÓN DE ENTRENAMIENTO ---
-UMBRAL_GIRO = 0.04
-UMBRAL_DE_PIE = 0.08
+# Agua
 UMBRAL_BEBER = 70
-DURACION_MINIMA_TRAGO = 2.0  # Segundos que debes mantener la mano para que cuente
-TECLAS_ACTIVAS = False 
+DURACION_MINIMA_TRAGO = 1.5
 
-calibrated_y = None
+# Variables de Estado
 contador_agua = 0
-estado_bebiendo = False 
-tiempo_sentado = 0.0
-tiempo_de_pie = 0.0
-ultimo_tiempo = time.time()
+estado_bebiendo = False
+inicio_gesto_agua = None
 
-status_posture = "NO CALIBRADO"
+inicio_ojos_cerrados = None
+alerta_sueño = False
 
-historial_rodilla_y = [] # Guardaremos las posiciones aquí
-MAX_HISTORIAL = 20       # Cuántos frames recordamos (aprox 1 segundo)
-UMBRAL_MOVIMIENTO_RODILLA = 0.02 # Sensibilidad del pedaleo
-estado_pedaleo = "PARADO"
+inicio_distraccion = None
+tiempo_distraccion_total = 0.0
 
+cap = cv2.VideoCapture(0) # 0 o 1 según tu cámara
 
-# Variables para el cronómetro del agua
-inicio_gesto_agua = None 
+print(">>> STUDY GUARDIAN ACTIVADO 📚")
+print(">>> Q: Salir | R: Resetear contadores")
 
-cap = cv2.VideoCapture(1) 
-
-print(">>> SISTEMA 'CYCLING COACH v3' (Anti-Falsos Positivos) 🚴💧")
-print(">>> Pulsa 'C' para CALIBRAR | 'R' para RESETEAR AGUA | 'Q' para SALIR")
-
+# Iniciamos los 3 detectores
 with FaceLandmarker.create_from_options(face_options) as face_detector, \
      HandLandmarker.create_from_options(hand_options) as hand_detector, \
-     PoseLandmarker.create_from_options(pose_options) as pose_detector:
+     ObjectDetector.create_from_options(obj_options) as obj_detector:
     
     while cap.isOpened():
         success, image = cap.read()
         if not success: break
 
+        # Espejo y Color
         image = cv2.flip(image, 1)
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
         timestamp_ms = int(time.time() * 1000)
+        h, w, _ = image.shape
 
-        tiempo_actual = time.time()
-        delta_tiempo = tiempo_actual - ultimo_tiempo
-        ultimo_tiempo = tiempo_actual
-
-        # Sumar tiempo según la postura detectada en el frame ANTERIOR
-        # (o la que se detecte abajo, pero actualizar aquí asegura que siempre cuenta)
-        if "DE PIE" in status_posture:
-            tiempo_de_pie += delta_tiempo
-        elif "SENTADO" in status_posture:
-            tiempo_sentado += delta_tiempo
-
+        # --- EJECUTAR IAs ---
         face_result = face_detector.detect_for_video(mp_image, timestamp_ms)
         hand_result = hand_detector.detect_for_video(mp_image, timestamp_ms)
-        pose_result = pose_detector.detect_for_video(mp_image, timestamp_ms)
-        
-        h, w, _ = image.shape
-        status_turn = "CENTRO"
-        status_posture = "SENTADO"
-        color_posture = (0, 255, 0)
-        color_turn = (0, 255, 0)
-        
-        boca_x, boca_y = 0, 0
-        mano_x, mano_y = 0, 0
-        hay_cara = False
-        hay_mano = False
+        obj_result = obj_detector.detect_for_video(mp_image, timestamp_ms)
 
-        # --- CARA ---
+        # Variables visuales
+        color_estado = (0, 255, 0) # Verde (Bien)
+        mensaje_central = "ESTUDIANDO..."
+        
+        # ---------------------------------------------------------
+        # 1. DETECTOR DE MÓVIL (DISTRACCIÓN)
+        # ---------------------------------------------------------
+        hay_movil = False
+        if obj_result.detections:
+            for detection in obj_result.detections:
+                # Obtenemos la caja del objeto
+                bbox = detection.bounding_box
+                start_point = bbox.origin_x, bbox.origin_y
+                end_point = bbox.origin_x + bbox.width, bbox.origin_y + bbox.height
+                
+                # Dibujar recuadro rojo alrededor del móvil
+                cv2.rectangle(image, start_point, end_point, (0, 0, 255), 3)
+                cv2.putText(image, "MOVIL DETECTADO", (start_point[0], start_point[1]-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                hay_movil = True
+
+        if hay_movil:
+            if inicio_distraccion is None: inicio_distraccion = time.time()
+            mensaje_central = "¡¡ SUELTA EL MÓVIL !!"
+            color_estado = (0, 0, 255)
+        else:
+            if inicio_distraccion is not None:
+                # Sumamos el tiempo que has estado distraído
+                tiempo_distraccion_total += (time.time() - inicio_distraccion)
+                inicio_distraccion = None
+
+        # ---------------------------------------------------------
+        # 2. DETECTOR DE SUEÑO (OJOS CERRADOS)
+        # ---------------------------------------------------------
+        boca_x, boca_y = 0, 0 # Para el agua luego
+        ojos_cerrados = False
+        
         if face_result.face_landmarks:
-            hay_cara = True
             face = face_result.face_landmarks[0]
-            nose = face[1]
-            nose_x, nose_y = nose.x * w, nose.y * h
-            left_ear = face[234]
-            right_ear = face[454]
+            
+            # Párpado superior (159) e inferior (145) del ojo izquierdo
+            ojo_izq_arriba = face[159]
+            ojo_izq_abajo = face[145]
+            # Ojo derecho (386, 374)
+            ojo_der_arriba = face[386]
+            ojo_der_abajo = face[374]
+
+            # Calcular distancia vertical
+            dist_izq = abs(ojo_izq_arriba.y - ojo_izq_abajo.y)
+            dist_der = abs(ojo_der_arriba.y - ojo_der_abajo.y)
+            promedio_apertura = (dist_izq + dist_der) / 2
+
+            # Guardar boca para el agua
             boca = face[13]
-            boca_x, boca_y = boca.x * w, boca.y * h
+            boca_x, boca_y = int(boca.x * w), int(boca.y * h)
 
-            dist_nose_left = abs(nose.x - left_ear.x)
-            dist_nose_right = abs(nose.x - right_ear.x)
-
-            if nose.x < left_ear.x or dist_nose_left < UMBRAL_GIRO:
-                status_turn = "IZQUIERDA <--"
-                color_turn = (0, 255, 255)
-                if TECLAS_ACTIVAS: pyautogui.press('left')
-            elif nose.x > right_ear.x or dist_nose_right < UMBRAL_GIRO:
-                status_turn = "DERECHA -->"
-                color_turn = (0, 255, 255)
-                if TECLAS_ACTIVAS: pyautogui.press('right')
-
-            if calibrated_y is not None:
-                if nose.y < (calibrated_y - UMBRAL_DE_PIE):
-                    status_posture = "DE PIE"
-                    color_posture = (0, 0, 255)
-                else:
-                    status_posture = "SENTADO"
+            # LÓGICA DE SUEÑO
+            if promedio_apertura < UMBRAL_OJOS_CERRADOS:
+                ojos_cerrados = True
+                if inicio_ojos_cerrados is None:
+                    inicio_ojos_cerrados = time.time()
+                
+                tiempo_cerrado = time.time() - inicio_ojos_cerrados
+                
+                # Barra de progreso de sueño
+                pct = min(int((tiempo_cerrado/TIEMPO_PARA_DORMIRSE)*100), 100)
+                mensaje_central = f"DURMIENDO... {pct}%"
+                
+                if tiempo_cerrado > TIEMPO_PARA_DORMIRSE:
+                    alerta_sueño = True
+                    mensaje_central = "¡¡ DESPIERTA !!"
+                    color_estado = (0, 0, 255)
+                    # SONIDO EN UBUNTU (Beep del sistema)
+                    print("\a") 
+                    # Opcional: Descomenta esto si tienes 'spd-say' instalado
+                    # os.system('spd-say "Despierta" &') 
             else:
-                status_posture = "NO CALIBRADO"
-                color_posture = (200, 200, 200)
-
-            cv2.circle(image, (int(nose_x), int(nose_y)), 5, color_posture, -1)
-            cv2.circle(image, (int(boca_x), int(boca_y)), 3, (255, 0, 255), -1)
-
-        # --- MANOS ---
-        if hand_result.hand_landmarks:
-            hand = hand_result.hand_landmarks[0]
-            hay_mano = True
-            muneca = hand[0]
-            mano_x, mano_y = muneca.x * w, muneca.y * h
-            cv2.circle(image, (int(mano_x), int(mano_y)), 8, (255, 100, 0), -1)
-
-        # --- PEDALEO ---
-        if pose_result.pose_landmarks:
-            pose = pose_result.pose_landmarks[0]
+                inicio_ojos_cerrados = None
+                alerta_sueño = False
             
-            # Punto 25: Rodilla Izquierda | Punto 26: Rodilla Derecha
-            # Usamos la izquierda como referencia (o la que se vea mejor)
-            rodilla = pose[25] 
-            
-            # Guardamos la altura Y en el historial
-            historial_rodilla_y.append(rodilla.y)
-            
-            # Mantenemos el historial limpio (solo los últimos X frames)
-            if len(historial_rodilla_y) > MAX_HISTORIAL:
-                historial_rodilla_y.pop(0)
-            
-            # CÁLCULO DE CADENCIA (Simple)
-            if len(historial_rodilla_y) == MAX_HISTORIAL:
-                # Buscamos el punto más alto y el más bajo del historial
-                min_y = min(historial_rodilla_y)
-                max_y = max(historial_rodilla_y)
-                amplitud = max_y - min_y
-                
-                # Si la rodilla ha subido y bajado lo suficiente...
-                if amplitud > UMBRAL_MOVIMIENTO_RODILLA:
-                    estado_pedaleo = "PEDALEANDO 🚴💨"
-                    color_pedaleo = (0, 255, 0) # Verde
-                else:
-                    estado_pedaleo = "PARADO 🛑"
-                    color_pedaleo = (0, 0, 255) # Rojo
+            # Dibujar ojos
+            color_ojos = (0, 0, 255) if ojos_cerrados else (0, 255, 0)
+            puntos_ojo = [159, 145, 386, 374]
+            for p in puntos_ojo:
+                px, py = int(face[p].x * w), int(face[p].y * h)
+                cv2.circle(image, (px, py), 2, color_ojos, -1)
 
-            # Dibujar rodilla para referencia visual
-            rodilla_x, rodilla_y = int(rodilla.x * w), int(rodilla.y * h)
-            cv2.circle(image, (rodilla_x, rodilla_y), 10, (255, 255, 0), -1)
-
-        # --- CÁLCULO INTELIGENTE DE AGUA (CON TEMPORIZADOR) ---
+        # ---------------------------------------------------------
+        # 3. DETECTOR DE AGUA
+        # ---------------------------------------------------------
+        mano_x, mano_y = 0, 0
+        hay_mano = False
         mensaje_agua = ""
-        color_linea = (200, 200, 200)
         
-        if hay_cara and hay_mano:
-            distancia = math.sqrt((boca_x - mano_x)**2 + (boca_y - mano_y)**2)
-            
-            if distancia < UMBRAL_BEBER:
-                # 1. Si es el primer frame que detecta la mano cerca, iniciamos el cronómetro
-                if inicio_gesto_agua is None:
-                    inicio_gesto_agua = time.time()
-                
-                # 2. Calcular cuánto tiempo lleva la mano ahí
-                tiempo_transcurrido = time.time() - inicio_gesto_agua
-                
-                if tiempo_transcurrido >= DURACION_MINIMA_TRAGO:
-                    # ¡YA HA PASADO EL SEGUNDO! ES UN TRAGO REAL
-                    color_linea = (0, 255, 0) # Verde
-                    mensaje_agua = "¡TRAGO REGISTRADO! +1"
-                    
+        if hand_result.hand_landmarks:
+            hay_mano = True
+            muneca = hand_result.hand_landmarks[0][0]
+            mano_x, mano_y = int(muneca.x * w), int(muneca.y * h)
+            cv2.circle(image, (mano_x, mano_y), 6, (255, 100, 0), -1)
+
+        if boca_x > 0 and hay_mano:
+            dist = math.sqrt((boca_x - mano_x)**2 + (boca_y - mano_y)**2)
+            if dist < UMBRAL_BEBER:
+                if inicio_gesto_agua is None: inicio_gesto_agua = time.time()
+                t_trans = time.time() - inicio_gesto_agua
+                if t_trans >= DURACION_MINIMA_TRAGO:
+                    mensaje_agua = "+1 TRAGO"
                     if not estado_bebiendo:
                         contador_agua += 1
-                        estado_bebiendo = True # Bloqueamos para no sumar más en este gesto
+                        estado_bebiendo = True
                 else:
-                    # AÚN ESTÁ VALIDANDO (Anti-Rascarse)
-                    color_linea = (0, 255, 255) # Amarillo
-                    porcentaje = int((tiempo_transcurrido / DURACION_MINIMA_TRAGO) * 100)
-                    mensaje_agua = f"Validando... {porcentaje}%"
-            
+                    mensaje_agua = "Validando..."
             else:
-                # Si aleja la mano, reseteamos todo
                 inicio_gesto_agua = None
                 estado_bebiendo = False
             
-            # Dibujar línea
-            cv2.line(image, (int(boca_x), int(boca_y)), (int(mano_x), int(mano_y)), color_linea, 2)
+            # Línea visual
+            if dist < UMBRAL_BEBER:
+                cv2.line(image, (boca_x, boca_y), (mano_x, mano_y), (0, 255, 255), 2)
 
-        else:
-            # Si pierde de vista la mano o la cara, reseteamos
-            inicio_gesto_agua = None
+        # ---------------------------------------------------------
+        # HUD (PANEL DE CONTROL)
+        # ---------------------------------------------------------
+        # Fondo semitransparente arriba
+        overlay = image.copy()
+        cv2.rectangle(overlay, (0, 0), (w, 100), (0, 0, 0), -1)
+        image = cv2.addWeighted(overlay, 0.6, image, 0.4, 0)
 
-        # --- HUD ---
-        cv2.rectangle(image, (10, 10), (380, 160), (0, 0, 0), -1)
-        cv2.putText(image, f"Giro: {status_turn}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_turn, 2)
-        cv2.putText(image, f"Postura: {status_posture}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_posture, 2)
+        # Estado Principal (Grande)
+        cv2.putText(image, mensaje_central, (w//2 - 150, 60), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, color_estado, 3)
 
-        # --- NUEVO: MOSTRAR CRONÓMETROS ---
-        texto_tiempos = f"Pie: {formatear_tiempo(tiempo_de_pie)} | Sentado: {formatear_tiempo(tiempo_sentado)}"
-        cv2.putText(image, texto_tiempos, (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        # Stats (Abajo a la izquierda)
+        # Fondo negro pequeño
+        cv2.rectangle(image, (10, h-90), (250, h-10), (0,0,0), -1)
         
-        color_agua = (255, 255, 255)
-        if estado_bebiendo: color_agua = (0, 255, 0) # Verde al confirmar
-        elif inicio_gesto_agua is not None: color_agua = (0, 255, 255) # Amarillo validando
+        # Agua
+        cv2.putText(image, f"Agua: {contador_agua} {mensaje_agua}", (20, h-60), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         
-        cv2.putText(image, f"Agua: {contador_agua} | {mensaje_agua}", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_agua, 2)
+        # Tiempo Distraído
+        m = int(tiempo_distraccion_total // 60)
+        s = int(tiempo_distraccion_total % 60)
+        cv2.putText(image, f"Distraccion: {m:02d}:{s:02d}", (20, h-30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 1)
+
+        cv2.imshow('STUDY GUARDIAN v1', image)
         
-        if not calibrated_y:
-            cv2.putText(image, "[Pulsa C para Calibrar]", (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
-
-        cv2.imshow('AI Cycling Coach - Final', image)
-
         key = cv2.waitKey(5) & 0xFF
         if key == ord('q'): break
-        elif key == ord('r'): contador_agua = 0
-        elif key == ord('c'):
-            if hay_cara:
-                calibrated_y = face_result.face_landmarks[0][1].y
-                print("--- CALIBRADO ---")
+        elif key == ord('r'): 
+            contador_agua = 0
+            tiempo_distraccion_total = 0
 
 cap.release()
 cv2.destroyAllWindows()
