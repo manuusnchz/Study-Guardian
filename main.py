@@ -54,7 +54,7 @@ UMBRAL_OJOS_CERRADOS = 0.02 # Distancia vertical párpados (Ajustar si es necesa
 TIEMPO_PARA_DORMIRSE = 2.0  # Segundos con ojos cerrados para pitar
 
 # Agua
-UMBRAL_BEBER = 70
+UMBRAL_BEBER = 250
 DURACION_MINIMA_TRAGO = 1.5
 
 # Variables de Estado
