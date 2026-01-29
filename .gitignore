@@ -1,0 +1,12 @@
+# --- MODELOS DE IA (Se descargan solos al ejecutar) ---
+*.task
+*.tflite
+
+# --- PYTHON Y ENTORNO ---
+__pycache__/
+*.pyc
+venv/
+.env
+
+# --- SISTEMA OPERATIVO ---
+.DS_Store
