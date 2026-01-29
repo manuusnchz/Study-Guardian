@@ -10,9 +10,7 @@
     <img src="https://img.shields.io/badge/NumPy-Math-013243?style=for-the-badge&logo=numpy&logoColor=white" />
   </p>
 
-  <p align="center">
-    <img src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3... (PON TU GIF AQUI)" alt="Demo Study Guardian" width="600">
-  </p>
+  
 
   <p>
     <b>Study Guardian</b> es un sistema inteligente que monitoriza en tiempo real la salud y el foco del estudiante. Utiliza múltiples modelos de IA para detectar fatiga, malas posturas y distracciones, generando un informe detallado al finalizar la sesión.
