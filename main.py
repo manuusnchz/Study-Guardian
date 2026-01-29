@@ -6,7 +6,7 @@ import mediapipe as mp
 import numpy as np
 
 import config
-from servicios import GestorIA
+from servicios import GestorIA, generar_informe
 import visuales
 
 def main():
@@ -28,6 +28,13 @@ def main():
     ultimo_momento_cara = time.time()
     estudio_en_pausa = False
     ultimo_tiempo_frame = time.time()
+
+    total_sueños = 0
+    total_malas_posturas = 0
+    postura_calibrada_y = None
+    ultimo_aviso_postura = 0
+    # ------------------------------
+
 
     print(">>> STUDY GUARDIAN MODULAR ACTIVADO 📚")
 
@@ -58,11 +65,45 @@ def main():
         # LÓGICA DE AUTO-PAUSA (NUEVO BLOQUE)
         # ---------------------------------------------------------
         if face_result.face_landmarks:
-            ultimo_momento_cara = time.time()
-            estudio_en_pausa = False
-        else:
-            if (time.time() - ultimo_momento_cara) > config.TIEMPO_PARA_PAUSA:
-                estudio_en_pausa = True
+            face = face_result.face_landmarks[0]
+            boca = face[13]
+            boca_x, boca_y = int(boca.x * w), int(boca.y * h)
+            nariz = face[1] # Necesario para postura
+
+            # --- SUEÑO ---
+            dist_izq = abs(face[159].y - face[145].y)
+            dist_der = abs(face[386].y - face[374].y)
+            apertura = (dist_izq + dist_der) / 2
+      
+            if apertura < config.UMBRAL_OJOS_CERRADOS:
+                if inicio_ojos_cerrados is None: inicio_ojos_cerrados = time.time()
+                t_cerrado = time.time() - inicio_ojos_cerrados
+                
+                pct = min(int((t_cerrado/config.TIEMPO_PARA_DORMIRSE)*100), 100)
+                mensaje_central = f"DURMIENDO... {pct}%"
+                
+                if t_cerrado > config.TIEMPO_PARA_DORMIRSE:
+                    mensaje_central = "¡¡ DESPIERTA !!"
+                    color_estado = (0, 0, 255)
+                    print("\a")
+                    # CONTAR SUEÑO (Truco para no sumar 30 veces por segundo)
+                    if int(t_cerrado * 10) % 20 == 0: 
+                        total_sueños += 1
+                
+                visuales.dibujar_ojos(image, face, w, h, True)
+            else:
+                inicio_ojos_cerrados = None
+                visuales.dibujar_ojos(image, face, w, h, False)
+
+            # --- POSTURA (NUEVO BLOQUE AÑADIDO) ---
+            visuales.dibujar_postura(image, nariz.y, postura_calibrada_y, w)
+            
+            if postura_calibrada_y is not None:
+                if (nariz.y - postura_calibrada_y) > config.UMBRAL_MALA_POSTURA:
+                    # Solo contamos 1 mala postura cada 3 segundos para no saturar
+                    if (time.time() - ultimo_aviso_postura) > 3.0:
+                        total_malas_posturas += 1
+                        ultimo_aviso_postura = time.time()
 
         if not estudio_en_pausa:
             tiempo_estudio_real += delta_tiempo
@@ -175,11 +216,29 @@ def main():
         image = visuales.dibujar_hud(image, mensaje_central, color_estado, datos_hud)
 
         cv2.imshow('Study Guardian Modular', image)
-        if cv2.waitKey(5) & 0xFF == ord('q'):
+        key = cv2.waitKey(5) & 0xFF
+        if key == ord('q'):
+            # --- GENERAR INFORME AL SALIR ---
+            print("\n🛑 Generando informe...")
+            stats = {
+                'tiempo_estudio': tiempo_estudio_real,
+                'tiempo_distraccion': tiempo_distraccion_total,
+                'agua': contador_agua,
+                'sueños': total_sueños,
+                'posturas': total_malas_posturas
+            }
+            generar_informe(stats)
             break
+            
+        elif key == ord('c'):
+            # Calibrar postura con la nariz
+            if face_result.face_landmarks:
+                postura_calibrada_y = face_result.face_landmarks[0][1].y
+                print("--- POSTURA CALIBRADA ---")
 
     cap.release()
     cv2.destroyAllWindows()
+    
 
 if __name__ == "__main__":
     main()

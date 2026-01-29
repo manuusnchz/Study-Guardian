@@ -73,3 +73,20 @@ def dibujar_aviso_luz(image, brillo):
         
         # Icono de "bombilla apagada" (círculo gris)
         cv2.circle(image, (w - 40, h - 40), 10, (100, 100, 100), -1)
+
+
+def dibujar_postura(image, nariz_y, calibrado_y, w):
+    if calibrado_y is not None:
+        # Línea de referencia (Verde)
+        y_ref = int(calibrado_y * image.shape[0])
+        cv2.line(image, (0, y_ref), (w, y_ref), (0, 255, 0), 1)
+        
+        # Línea actual
+        y_act = int(nariz_y * image.shape[0])
+        diff = nariz_y - calibrado_y
+        
+        if diff > config.UMBRAL_MALA_POSTURA:
+            # Línea Roja (Mala postura)
+            cv2.line(image, (0, y_act), (w, y_act), (0, 0, 255), 2)
+            cv2.putText(image, "¡SIENTATE BIEN!", (20, image.shape[0]//2), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)

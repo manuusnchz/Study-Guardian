@@ -10,3 +10,8 @@ venv/
 
 # --- SISTEMA OPERATIVO ---
 .DS_Store
+
+
+# ----- IFORMES
+
+informe*

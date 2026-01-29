@@ -2,7 +2,8 @@
 import os
 import urllib.request
 import mediapipe as mp
-import config  # Importamos tu configuración
+import config 
+from datetime import datetime
 
 class GestorIA:
     def __init__(self):
@@ -54,3 +55,76 @@ class GestorIA:
         hand = self.hand_detector.detect_for_video(mp_image, timestamp)
         obj = self.obj_detector.detect_for_video(mp_image, timestamp)
         return face, hand, obj
+    
+
+    def generar_informe(stats):
+        """Genera un archivo .txt con el resumen de la sesión."""
+        ahora = datetime.now()
+        nombre_archivo = f"informe_estudio_{ahora.strftime('%Y-%m-%d_%H-%M')}.txt"
+    
+        # Cálculos
+        tiempo_total = stats['tiempo_estudio'] + stats['tiempo_distraccion']
+        pct_focus = (stats['tiempo_estudio'] / tiempo_total * 100) if tiempo_total > 0 else 0
+
+        contenido = f"""
+    ========================================
+    REPORTE DE SESIÓN - STUDY GUARDIAN
+    ========================================
+    Fecha: {ahora.strftime('%d/%m/%Y')}
+    Hora Fin: {ahora.strftime('%H:%M:%S')}
+
+    --- RENDIMIENTO ---
+    ✅ Tiempo de Estudio: {int(stats['tiempo_estudio']//60)} min {int(stats['tiempo_estudio']%60)} seg
+    ❌ Tiempo Distraído:  {int(stats['tiempo_distraccion']//60)} min {int(stats['tiempo_distraccion']%60)} seg
+    📊 Nivel de Enfoque:  {pct_focus:.1f}%
+
+    --- SALUD ---
+    💧 Agua bebida:       {stats['agua']} tragos
+    💤 Micro-sueños:      {stats['sueños']} detectados
+    ⚠️ Malas posturas:    {stats['posturas']} detectadas
+
+    ========================================
+    """
+        try:
+            with open(nombre_archivo, "w", encoding="utf-8") as f:
+                f.write(contenido)
+            print(f"\n📄 Informe guardado: {nombre_archivo}")
+        except Exception as e:
+            print(f"❌ Error al guardar informe: {e}")
+
+
+
+def generar_informe(stats):
+    """Genera un archivo .txt con el resumen de la sesión."""
+    ahora = datetime.now()
+    nombre_archivo = f"informe_estudio_{ahora.strftime('%Y-%m-%d_%H-%M')}.txt"
+    
+    # Cálculos
+    tiempo_total = stats['tiempo_estudio'] + stats['tiempo_distraccion']
+    pct_focus = (stats['tiempo_estudio'] / tiempo_total * 100) if tiempo_total > 0 else 0
+
+    contenido = f"""
+========================================
+   REPORTE DE SESIÓN - STUDY GUARDIAN
+========================================
+Fecha: {ahora.strftime('%d/%m/%Y')}
+Hora Fin: {ahora.strftime('%H:%M:%S')}
+
+--- RENDIMIENTO ---
+✅ Tiempo de Estudio: {int(stats['tiempo_estudio']//60)} min {int(stats['tiempo_estudio']%60)} seg
+❌ Tiempo Distraído:  {int(stats['tiempo_distraccion']//60)} min {int(stats['tiempo_distraccion']%60)} seg
+📊 Nivel de Enfoque:  {pct_focus:.1f}%
+
+--- SALUD ---
+💧 Agua bebida:       {stats['agua']} tragos
+💤 Micro-sueños:      {stats['sueños']} detectados
+⚠️ Malas posturas:    {stats['posturas']} detectadas
+
+========================================
+"""
+    try:
+        with open(nombre_archivo, "w", encoding="utf-8") as f:
+            f.write(contenido)
+        print(f"\n📄 Informe guardado: {nombre_archivo}")
+    except Exception as e:
+        print(f"❌ Error al guardar informe: {e}")
