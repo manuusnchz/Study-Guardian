@@ -11,7 +11,7 @@
   </p>
 
   <p align="center">
-    <img src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3... (PON TU GIF AQUI)" alt="Demo Study Guardian" width="600">
+    <img src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3... (https://github.com/manuusnchz/Study-Guardian/issues/1#issue-3871592913)" alt="Demo Study Guardian" width="600">
   </p>
 
   <p>
