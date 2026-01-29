@@ -116,10 +116,17 @@ def main():
 
         # LÓGICA 1: CARA Y SUEÑO
         if face_result.face_landmarks:
+            # 1. SI TE VEO: Reseteamos el contador de ausencia
+            ultimo_momento_cara = time.time()
+            estudio_en_pausa = False
+
+            # --- AQUI EMPIEZA LA LÓGICA DE CARA (Sueño y Postura) ---
             face = face_result.face_landmarks[0]
             boca = face[13]
             boca_x, boca_y = int(boca.x * w), int(boca.y * h)
+            nariz = face[1] 
 
+            # --- SUEÑO ---
             dist_izq = abs(face[159].y - face[145].y)
             dist_der = abs(face[386].y - face[374].y)
             apertura = (dist_izq + dist_der) / 2
@@ -135,11 +142,32 @@ def main():
                     mensaje_central = "¡¡ DESPIERTA !!"
                     color_estado = (0, 0, 255)
                     print("\a")
+                    if int(t_cerrado * 10) % 20 == 0: 
+                        total_sueños += 1
                 
                 visuales.dibujar_ojos(image, face, w, h, True)
             else:
                 inicio_ojos_cerrados = None
                 visuales.dibujar_ojos(image, face, w, h, False)
+
+            # --- POSTURA ---
+            visuales.dibujar_postura(image, nariz.y, postura_calibrada_y, w)
+            
+            if postura_calibrada_y is not None:
+                if (nariz.y - postura_calibrada_y) > config.UMBRAL_MALA_POSTURA:
+                    if (time.time() - ultimo_aviso_postura) > 3.0:
+                        total_malas_posturas += 1
+                        ultimo_aviso_postura = time.time()
+        
+        else:
+            # 2. SI NO TE VEO (Bloque ELSE que faltaba):
+            # Comprobamos cuánto tiempo ha pasado desde la última vez que te vi
+            if (time.time() - ultimo_momento_cara) > config.TIEMPO_PARA_PAUSA:
+                estudio_en_pausa = True
+
+        # Solo sumamos tiempo si NO estamos en pausa
+        if not estudio_en_pausa:
+            tiempo_estudio_real += delta_tiempo
 
         # LÓGICA 2: OBJETOS
         hay_movil = False
